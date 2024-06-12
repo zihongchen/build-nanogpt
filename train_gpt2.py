@@ -67,6 +67,7 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
+       # x + is the residul connction
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
