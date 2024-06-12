@@ -163,6 +163,7 @@ class GPT(nn.Module):
 
 # -----------------------------------------------------------------------------
 import tiktoken
+import random
 
 class DataLoaderLite:
     def __init__(self, B, T):
@@ -180,15 +181,16 @@ class DataLoaderLite:
 
         # state
         self.current_position = 0
-
+    # why does this not have to shuffle?? What happens if I implement shuffle?
     def next_batch(self):
         B, T = self.B, self.T
+        self.current_position = random.randint(0, len(self.tokens)-B*T-1 )
         buf = self.tokens[self.current_position : self.current_position+B*T+1]
         x = (buf[:-1]).view(B, T) # inputs
         y = (buf[1:]).view(B, T) # targets
         # advance the position in the tensor
         self.current_position += B * T
-        # if loading the next batch would be out of bounds, reset
+        # if loading the next batch would be out of bounds, reset loop back to 0 
         if self.current_position + (B * T + 1) > len(self.tokens):
             self.current_position = 0
         return x, y
@@ -209,8 +211,13 @@ model = GPT(GPTConfig())
 model.to(device)
 
 # optimize!
+<<<<<<< Updated upstream
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(200):
+=======
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-5)
+for i in range(1000):
+>>>>>>> Stashed changes
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
@@ -219,12 +226,15 @@ for i in range(200):
     optimizer.step()
     print(f"step {i}, loss: {loss.item()}")
 
-import sys; sys.exit(0)
+# import sys; sys.exit(0)
+
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
 
 # prefix tokens
 model.eval()
 num_return_sequences = 5
-max_length = 30
+max_length = 100
 tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long) # (8,)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (5, 8)
@@ -237,7 +247,7 @@ torch.cuda.manual_seed(42)
 while x.size(1) < max_length:
     # forward the model to get the logits
     with torch.no_grad():
-        logits = model(x) # (B, T, vocab_size)
+        logits, loss = model(x) # (B, T, vocab_size)
         # take the logits at the last position
         logits = logits[:, -1, :] # (B, vocab_size)
         # get the probabilities
