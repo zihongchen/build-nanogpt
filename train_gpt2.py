@@ -12,7 +12,7 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd) #TODO: why is out 3*n_embd? ->kqv 
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         # regularization
@@ -22,13 +22,14 @@ class CausalSelfAttention(nn.Module):
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
 
-    def forward(self, x):
+    def forward(self, x): # is a map-reduce operation essentially 
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
         # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
+        # run all attention heads at the same time
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -37,7 +38,7 @@ class CausalSelfAttention(nn.Module):
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side -> same as concate all head results on last dimension
         # output projection
         y = self.c_proj(y)
         return y
@@ -72,10 +73,10 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024 # max sequence length
+    block_size: int = 1024 # max sequence length, used in position embedding also
     vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
-    n_head: int = 12 # number of heads
+    n_head: int = 12 # number of heads, head_size = n_embd/n_head
     n_embd: int = 768 # embedding dimension
 
 class GPT(nn.Module):
@@ -90,6 +91,8 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd),
         ))
+# The line `self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)` in the GPT class
+# is defining a linear layer that serves as the final classifier in the GPT model.
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     def forward(self, idx, targets=None):
@@ -175,11 +178,12 @@ import tiktoken
 enc = tiktoken.get_encoding('gpt2')
 with open('input.txt', 'r') as f:
     text = f.read()
-text = text[:1000]
+text = text[:10000]
 tokens = enc.encode(text)
-B, T = 4, 32
+# create batch from 1d encoded tokens
+B, T = 10, 100
 buf = torch.tensor(tokens[:B*T + 1])
-buf = buf.to(device)
+buf = buf.to(device) 
 x = buf[:-1].view(B, T)
 y = buf[1:].view(B, T)
 
@@ -188,15 +192,15 @@ model = GPT(GPTConfig())
 model.to(device)
 
 # optimize!
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-for i in range(50):
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4) # good learning rate to start 
+for i in range(100):
     optimizer.zero_grad()
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
     print(f"step {i}, loss: {loss.item()}")
 
-import sys; sys.exit(0)
+# import sys; sys.exit(0)
 
 # prefix tokens
 model.eval()
@@ -214,9 +218,10 @@ torch.cuda.manual_seed(42)
 while x.size(1) < max_length:
     # forward the model to get the logits
     with torch.no_grad():
-        logits = model(x) # (B, T, vocab_size)
+        # logits = model(x) # (B, T, vocab_size)
+        logits, loss = model(x) # (B, T, vocab_size) we return both loss and logits in out GPT2 definition
         # take the logits at the last position
-        logits = logits[:, -1, :] # (B, vocab_size)
+        logits = logits[:, -1, :] # (B, vocab_size), selecting logits corresponding to the last position in each sequence of the batch
         # get the probabilities
         probs = F.softmax(logits, dim=-1)
         # do top-k sampling of 50 (huggingface pipeline default)
