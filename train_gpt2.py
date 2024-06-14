@@ -197,6 +197,8 @@ class DataLoaderLite:
 
 # -----------------------------------------------------------------------------
 # attempt to autodetect the device
+import time
+
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
@@ -204,27 +206,33 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"using device: {device}")
 
-train_loader = DataLoaderLite(B=4, T=32)
+train_loader = DataLoaderLite(B=8, T=1024)
+
+# torch.set_float32_matmul_precision('medium')
 
 # get logits
 model = GPT(GPTConfig())
 model.to(device)
 
 # optimize!
-<<<<<<< Updated upstream
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-for i in range(200):
-=======
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-5)
-for i in range(1000):
->>>>>>> Stashed changes
+startTime = time.time()
+for i in range(100):
+    t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
-    loss.backward()
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     optimizer.step()
-    print(f"step {i}, loss: {loss.item()}")
+    torch.cuda.synchronize() # wait for the GPU to finish work no sync for now?? qued up??
+    t1 = time.time()
+    dt = (t1 - t0)*1000 # time difference in miliseconds
+    tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
+    print(f"step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
+    # print(f"step {i}, loss: {loss.item()}")
+endTime = time.time()
+print(f"100 Steps total takes  {endTime - startTime}")
 
 # import sys; sys.exit(0)
 
