@@ -253,6 +253,7 @@ import torch.distributed as dist
 # torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
 if ddp:
+    print("trying to run ddp")
     # use of DDP atm demands CUDA, we set the device appropriately according to rank
     assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
     init_process_group(backend='nccl')
@@ -295,8 +296,9 @@ torch.set_float32_matmul_precision('high')
 
 # create model
 model = GPT(GPTConfig(vocab_size=50304))
+print(device)
 model.to(device)
-model = torch.compile(model)
+# model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model # always contains the "raw" unwrapped model
@@ -328,7 +330,7 @@ for step in range(max_steps):
     for micro_step in range(grad_accum_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        with torch.autocast(device_type='cuda' if device.startswith('cuda') else 'cpu', dtype=torch.bfloat16):
             logits, loss = model(x, y)
         # we have to scale the loss to account for gradient accumulation,
         # because the gradients just add on each successive backward().
